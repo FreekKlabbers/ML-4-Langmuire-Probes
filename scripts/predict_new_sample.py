@@ -19,4 +19,4 @@ y_pred = Predictor.predict(X)
 
 print("Predicted J values for the new samples:")
 for i, pred in enumerate(y_pred):
-    print(f"Sample {i + 1}: {pred:.4f}")
+    print(f"Sample {i + 1}: {pred:.4f}, True J: {y_true[i][0]:.4f}")

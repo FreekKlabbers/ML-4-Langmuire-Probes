@@ -89,17 +89,21 @@ def preprocess_data(
     # Load & Clean
     results = np.load(file_path)
 
+    print(f"Loaded {len(results)} rows from {file_path}.")
+
     # eta filters
-    # results = filter_settings(results, "eta", min=1, max=50)
+    results = filter_settings(results, "eta", min=1, max=50)
 
-    # # delta filters
-    # results = filter_settings(results, "delta", min=1e-3)
+    # delta filters
+    results = filter_settings(results, "delta", min=1e-3)
 
-    # # cp filters
-    # results = filter_settings(results, "Cp", min=5)
+    # cp filters
+    results = filter_settings(results, "Cp", min=5)
 
-    # # R (Lp Ld) filter
-    # results = filter_settings(results, "R", min=10)
+    # R (Lp Ld) filter
+    results = filter_settings(results, "R", min=10)
+
+    print(f"Filtered down to {len(results)} rows after applying parameter filters.")
 
     # Remove rows where both eta and J are zero
     mask = ~((results[:, 0] == 0.0) * (results[:, 1] == 0.0))

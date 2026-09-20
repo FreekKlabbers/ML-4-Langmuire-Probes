@@ -14,7 +14,7 @@ from NNProbe.pipeline import FEATURE_COLUMNS, engineer_features, physical_log
 
 N_SPLITS = 5
 FILE_PATH = "data/bryant08-precalc-ML.npy"
-RANDOM_STATE = 42
+RANDOM_STATE = 0
 
 
 def load_data(file_path: str) -> tuple[np.ndarray, np.ndarray]:
@@ -43,7 +43,7 @@ def make_preprocessor() -> ColumnTransformer:
     )
 
 
-def evaluate_fold(model, target_scaler, X_test, y_test) -> tuple[float, float]:
+def evaluate_fold(model, target_scaler, X_test, y_test) -> tuple[float, float, float]:
     model.eval()
     X_test_tensor = torch.as_tensor(X_test, dtype=torch.float32)
     model_device = next(model.parameters()).device
@@ -55,7 +55,11 @@ def evaluate_fold(model, target_scaler, X_test, y_test) -> tuple[float, float]:
     predicted = np.exp(predicted_log)
     actual = np.exp(actual_log)
     relative_error = np.abs((predicted - actual) / (actual + 1e-15))
-    return r2_score(actual_log, predicted_log), float(np.mean(relative_error))
+    return (
+        r2_score(actual_log, predicted_log),
+        float(np.mean(relative_error)),
+        float(np.max(relative_error)),
+    )
 
 
 def cross_validate(file_path: str = FILE_PATH) -> None:
@@ -86,10 +90,13 @@ def cross_validate(file_path: str = FILE_PATH) -> None:
             random_state=RANDOM_STATE + fold,
         )
 
-        r2, mean_relative_error = evaluate_fold(model, target_scaler, X_test, y_test)
-        fold_metrics.append((r2, mean_relative_error))
+        r2, mean_relative_error, max_relative_error = evaluate_fold(
+            model, target_scaler, X_test, y_test
+        )
+        fold_metrics.append((r2, mean_relative_error, max_relative_error))
         print(f"Fold R² (log-space): {r2:.6f}")
         print(f"Fold mean relative error: {mean_relative_error:.2%}")
+        print(f"Fold max relative error: {max_relative_error:.2%}")
 
     metrics = np.asarray(fold_metrics)
     print("\n" + "=" * 40)
@@ -98,6 +105,9 @@ def cross_validate(file_path: str = FILE_PATH) -> None:
     print(f"R² (log-space): {metrics[:, 0].mean():.6f} +/- {metrics[:, 0].std():.6f}")
     print(
         f"Mean relative error: {metrics[:, 1].mean():.2%} +/- {metrics[:, 1].std():.2%}"
+    )
+    print(
+        f"Max relative error: {metrics[:, 2].mean():.2%} +/- {metrics[:, 2].std():.2%}"
     )
 
 

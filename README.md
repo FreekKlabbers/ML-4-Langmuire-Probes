@@ -16,47 +16,56 @@ Max Relative Error:        26.73%
 
 ## 5-fold cross validation
 
-Fold 1/5
-Using device: cuda
-Epoch 1/1000 - train_loss: 0.103353 - val_loss: 0.000495
-Epoch 50/1000 - train_loss: 0.000009 - val_loss: 0.000005
-Early stopping at epoch 57 (no improvement in 50 epochs). Best val loss: 0.000026
-Fold R² (log-space): 0.999974
-Fold mean relative error: 2.09%
+R² (log-space): 0.999950 +/- 0.000042
+Mean relative error: 2.59% +/- 1.28%
+Max relative error: 37.05% +/- 15.38%
 
-Fold 2/5
+### Fold 1/5
+
 Using device: cuda
-Epoch 1/1000 - train_loss: 0.098935 - val_loss: 0.000478
+Epoch 1/1000 - train_loss: 0.092831 - val_loss: 0.000432
+Epoch 50/1000 - train_loss: 0.000008 - val_loss: 0.000006
+Early stopping at epoch 97 (no improvement in 50 epochs). Best val loss: 0.000006
+Fold R² (log-space): 0.999995
+Fold mean relative error: 0.91%
+Fold max relative error: 11.55%
+
+### Fold 2/5
+
+Using device: cuda
+Epoch 1/1000 - train_loss: 0.101331 - val_loss: 0.000395
 Epoch 50/1000 - train_loss: 0.000008 - val_loss: 0.000005
-Early stopping at epoch 56 (no improvement in 50 epochs). Best val loss: 0.000028
-Fold R² (log-space): 0.999973
-Fold mean relative error: 2.13%
-
-Fold 3/5
-Using device: cuda
-Epoch 1/1000 - train_loss: 0.097573 - val_loss: 0.000388
-Epoch 50/1000 - train_loss: 0.000008 - val_loss: 0.000004
-Early stopping at epoch 57 (no improvement in 50 epochs). Best val loss: 0.000022
-Fold R² (log-space): 0.999977
-Fold mean relative error: 1.96%
-
-Fold 4/5
-Using device: cuda
-Epoch 1/1000 - train_loss: 0.090695 - val_loss: 0.000401
-Epoch 50/1000 - train_loss: 0.000009 - val_loss: 0.000012
-Early stopping at epoch 63 (no improvement in 50 epochs). Best val loss: 0.000014
-Fold R² (log-space): 0.999987
-Fold mean relative error: 1.51%
-
-Fold 5/5
-Using device: cuda
-Epoch 1/1000 - train_loss: 0.103887 - val_loss: 0.000354
-Epoch 50/1000 - train_loss: 0.000007 - val_loss: 0.000006
-Early stopping at epoch 52 (no improvement in 50 epochs). Best val loss: 0.000098
+Early stopping at epoch 52 (no improvement in 50 epochs). Best val loss: 0.000096
 Fold R² (log-space): 0.999902
-Fold mean relative error: 4.05%
+Fold mean relative error: 4.00%
+Fold max relative error: 48.11%
 
-# 5-FOLD CROSS-VALIDATION RESULTS
+### Fold 3/5
 
-R² (log-space): 0.999962 +/- 0.000031
-Mean relative error: 2.35% +/- 0.88%
+Using device: cuda
+Epoch 1/1000 - train_loss: 0.103529 - val_loss: 0.000496
+Epoch 50/1000 - train_loss: 0.000008 - val_loss: 0.000005
+Early stopping at epoch 52 (no improvement in 50 epochs). Best val loss: 0.000104
+Fold R² (log-space): 0.999898
+Fold mean relative error: 4.14%
+Fold max relative error: 37.54%
+
+### Fold 4/5
+
+Using device: cuda
+Epoch 1/1000 - train_loss: 0.096117 - val_loss: 0.000469
+Epoch 50/1000 - train_loss: 0.000007 - val_loss: 0.000019
+Early stopping at epoch 63 (no improvement in 50 epochs). Best val loss: 0.000015
+Fold R² (log-space): 0.999984
+Fold mean relative error: 1.62%
+Fold max relative error: 56.52%
+
+### Fold 5/5
+
+Using device: cuda
+Epoch 1/1000 - train_loss: 0.094381 - val_loss: 0.000490
+Epoch 50/1000 - train_loss: 0.000008 - val_loss: 0.000006
+Early stopping at epoch 58 (no improvement in 50 epochs). Best val loss: 0.000031
+Fold R² (log-space): 0.999970
+Fold mean relative error: 2.28%
+Fold max relative error: 31.52%
