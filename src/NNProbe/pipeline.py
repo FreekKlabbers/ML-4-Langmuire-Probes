@@ -11,11 +11,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
 
-def physical_log(x):
-    x = np.asarray(x, dtype=np.float64)
-    return np.log10(x + 1e-15)
-
-
 def _resolve_output_path(path: str, default_name: str) -> Path:
     resolved = Path(path)
     if resolved.suffix == "" or resolved.exists() and resolved.is_dir():
@@ -42,6 +37,16 @@ def engineer_features(data: pd.DataFrame) -> pd.DataFrame:
     features["P0"] = np.exp(-features["delta"] * features["s_ld"])
     features["sqrt"] = np.sqrt(features["eta"] / features["R"])
     return features[FEATURE_COLUMNS]
+
+
+def evaluation_mask(data: pd.DataFrame) -> pd.Series:
+    """Return the rows in the parameter range used for evaluation."""
+    return (
+        data["eta"].between(1, 50)
+        & data["delta"].ge(1e-3)
+        & data["Cp"].ge(5)
+        & data["R"].ge(10)
+    )
 
 
 def filter_settings(results, param: str, min=None, max=None):
@@ -91,35 +96,34 @@ def preprocess_data(
 
     print(f"Loaded {len(results)} rows from {file_path}.")
 
-    # eta filters
-    results = filter_settings(results, "eta", min=1, max=50)
-
-    # delta filters
-    results = filter_settings(results, "delta", min=1e-3)
-
-    # cp filters
-    results = filter_settings(results, "Cp", min=5)
-
-    # R (Lp Ld) filter
-    results = filter_settings(results, "R", min=10)
-
-    print(f"Filtered down to {len(results)} rows after applying parameter filters.")
-
     # Remove rows where both eta and J are zero
     mask = ~((results[:, 0] == 0.0) * (results[:, 1] == 0.0))
     df = pd.DataFrame(results[mask], columns=["eta", "J", "R", "delta", "Cp"])
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
 
-    X = engineer_features(df)
-    y = np.asarray(np.log(df["J"])).reshape(-1, 1)  # Reshape for scaler
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, shuffle=True
+    train_df, test_df = train_test_split(
+        df, test_size=test_size, random_state=random_state, shuffle=True
     )
+    test_df = test_df.loc[evaluation_mask(test_df)]
+    print(
+        f"Training on {len(train_df)} rows; evaluating on "
+        f"{len(test_df)} rows in the filtered parameter range."
+    )
+
+    X_train = engineer_features(train_df)
+    X_test = engineer_features(test_df)
+    y_train = np.asarray(np.log(train_df["J"])).reshape(-1, 1)
+    y_test = np.asarray(np.log(test_df["J"])).reshape(-1, 1)
 
     feat_pipeline = Pipeline(
         [
-            ("log", FunctionTransformer(physical_log, validate=True)),
+            (
+                "clip",
+                FunctionTransformer(
+                    np.clip, kw_args={"a_min": 1e-15, "a_max": None}, validate=True
+                ),
+            ),
+            ("log", FunctionTransformer(np.log10, validate=True)),
             ("scaler", StandardScaler()),
         ]
     )

@@ -10,15 +10,20 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
 from NNProbe import train_mlp_regressor
-from NNProbe.pipeline import FEATURE_COLUMNS, engineer_features, physical_log
+from NNProbe.pipeline import (
+    FEATURE_COLUMNS,
+    engineer_features,
+    evaluation_mask,
+    physical_log,
+)
 
 N_SPLITS = 5
 FILE_PATH = "data/bryant08-precalc-ML.npy"
 RANDOM_STATE = 0
 
 
-def load_data(file_path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Load the cleaned, engineered features and log-transformed target."""
+def load_data(file_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load all cleaned rows plus the mask for the evaluation parameter range."""
     results = np.load(file_path)
     mask = ~((results[:, 0] == 0.0) * (results[:, 1] == 0.0))
     frame = pd.DataFrame(results[mask], columns=["eta", "J", "R", "delta", "Cp"])
@@ -26,7 +31,7 @@ def load_data(file_path: str) -> tuple[np.ndarray, np.ndarray]:
 
     features = engineer_features(frame)
     target = np.log(frame["J"].to_numpy()).reshape(-1, 1)
-    return features.to_numpy(), target
+    return features.to_numpy(), target, evaluation_mask(frame).to_numpy()
 
 
 def make_preprocessor() -> ColumnTransformer:
@@ -63,11 +68,15 @@ def evaluate_fold(model, target_scaler, X_test, y_test) -> tuple[float, float, f
 
 
 def cross_validate(file_path: str = FILE_PATH) -> None:
-    X, y = load_data(file_path)
+    X, y, evaluation_rows = load_data(file_path)
     fold_metrics = []
     splitter = KFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
 
     for fold, (train_indices, test_indices) in enumerate(splitter.split(X), start=1):
+        test_indices = test_indices[evaluation_rows[test_indices]]
+        if len(test_indices) == 0:
+            raise ValueError(f"Fold {fold} has no rows in the evaluation range.")
+
         preprocessor = make_preprocessor()
         X_train = np.asarray(preprocessor.fit_transform(X[train_indices]))
         X_test = np.asarray(preprocessor.transform(X[test_indices]))

@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pandas as pd
 import torch
 from sklearn.compose import ColumnTransformer
@@ -30,12 +33,29 @@ class Predictor:
         self.preprocessor, self.target_scaler = load_preprocessor(
             f"{weight_path}/preprocessor.pkl", f"{weight_path}/target_scaler.pkl"
         )
+
+        model_dir = Path(weight_path)
+        config_path = model_dir / MLPRegressorTorch.CONFIG_FILENAME
+        if config_path.exists():
+            with open(config_path) as f:
+                config = json.load(f)
+            hidden_layer_sizes = tuple(
+                config.get("hidden_layer_sizes", (512, 256, 128, 64))
+            )
+            input_dim = int(config.get("input_dim", 6))
+        else:
+            hidden_layer_sizes = (512, 256, 128, 64)
+            input_dim = 6
+
         self.model = MLPRegressorTorch(
-            input_dim=6, hidden_layer_sizes=(512, 256, 128, 64)
+            input_dim=input_dim, hidden_layer_sizes=hidden_layer_sizes
         )
-        self.model.load_state_dict(
-            torch.load(f"{weight_path}/mlp_regressor_model.pth", weights_only=True)
-        )
+
+        weight_file = model_dir / MLPRegressorTorch.WEIGHTS_FILENAME
+        if not weight_file.exists():
+            weight_file = model_dir / MLPRegressorTorch.LEGACY_WEIGHTS_FILENAME
+
+        self.model.load_state_dict(torch.load(weight_file, weights_only=True))
         self.model.eval()  # Set the model to evaluation mode
 
     def predict(self, X):

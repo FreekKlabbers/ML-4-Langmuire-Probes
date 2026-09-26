@@ -1,5 +1,10 @@
+import inspect
+import json
+from pathlib import Path
+
 import numpy as np
 import torch
+from huggingface_hub import hf_hub_download
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
@@ -9,11 +14,16 @@ class MLPRegressorTorch(nn.Module):
     Feedforward network with ReLU activations, and a single linear output unit for regression.
     """
 
+    WEIGHTS_FILENAME = "model.pt"
+    LEGACY_WEIGHTS_FILENAME = "mlp_regressor_model.pth"
+    CONFIG_FILENAME = "config.json"
+
     def __init__(self, input_dim: int, hidden_layer_sizes=(128, 64, 32, 16)):
         """
         Initializes the MLPRegressorTorch model.
         """
         super().__init__()
+        self._capture_config(locals())  # capture configuration for Hugging Face
 
         layers = []
         prev_dim = input_dim
@@ -26,8 +36,88 @@ class MLPRegressorTorch(nn.Module):
 
         self.net = nn.Sequential(*layers)
 
+    def _capture_config(self, local_vars: dict):
+        """
+        Wraps the local variables of the __init__ method to capture the model configuration for saving/loading.
+        """
+        sig = inspect.signature(self.__class__.__init__)
+        param_names = [p for p in sig.parameters if p != "self"]
+        self.config = {k: local_vars[k] for k in param_names}
+
     def forward(self, x):
         return self.net(x).squeeze(-1)
+
+    def save_pretrained(self, save_dir: str | Path):
+        """
+        Save model weights and configuration to a directory.
+        """
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        weights_path = save_dir / self.WEIGHTS_FILENAME
+        legacy_weights_path = save_dir / self.LEGACY_WEIGHTS_FILENAME
+
+        torch.save(self.state_dict(), weights_path)
+        torch.save(self.state_dict(), legacy_weights_path)
+
+        with open(save_dir / self.CONFIG_FILENAME, "w") as f:
+            json.dump(self.config, f, indent=2)
+
+        print(f"Saved weights + config to {save_dir}")
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        repo_id: str,
+        revision: str | None = None,
+        map_location: str | None = None,
+        **override_kwargs,
+    ):
+        """
+        Load model weights and configuration from a Hugging Face repository.
+
+        Parameters
+        ----------
+        repo_id : str
+            The repository ID on Hugging Face Hub.
+        revision : str, optional
+            The specific revision (branch, tag, or commit) to load. Defaults to the latest
+        map_location : str, optional
+            The device to map the model to. If None, defaults to 'cpu'.
+        override_kwargs : dict
+            Any additional keyword arguments to override the model's configuration.
+
+        Returns
+        -------
+        MLPRegressorTorch
+            An instance of the MLPRegressorTorch model with loaded weights and configuration.
+        """
+        local_dir = Path(repo_id)
+        if local_dir.is_dir():
+            weights_path = local_dir / cls.WEIGHTS_FILENAME
+            config_path = local_dir / cls.CONFIG_FILENAME
+        else:
+            weights_path = hf_hub_download(
+                repo_id=repo_id, filename=cls.WEIGHTS_FILENAME, revision=revision
+            )
+            config_path = hf_hub_download(
+                repo_id=repo_id, filename=cls.CONFIG_FILENAME, revision=revision
+            )
+
+        with open(config_path) as f:
+            config = json.load(f)
+        config.update(override_kwargs)
+
+        # hidden_layer_sizes round-trips through JSON as a list; restore tuple.
+        for k, v in config.items():
+            if isinstance(v, list):
+                config[k] = tuple(v)
+
+        model = cls(**config)
+        state_dict = torch.load(weights_path, map_location=map_location or "cpu")
+        model.load_state_dict(state_dict)
+        model.eval()
+        return model
 
 
 def train_mlp_regressor(
@@ -74,7 +164,7 @@ def train_mlp_regressor(
         Seed for random number generator for reproducibility.
     device : str, optional
         Device to run the training on. If None, will use 'cuda' if available, else 'cpu'.
-    
+
     Returns
     -------
     model : MLPRegressorTorch
@@ -179,6 +269,3 @@ def train_mlp_regressor(
         model.load_state_dict(best_state_dict)
 
     return model, history
-
-
-    

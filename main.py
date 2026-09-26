@@ -1,12 +1,11 @@
 import os
 
-import torch
-
 from NNProbe import (
     preprocess_data,
     save_preprocessor,
     test_dnn_performance,
     train_mlp_regressor,
+    upload,
 )
 
 if __name__ == "__main__":
@@ -16,9 +15,16 @@ if __name__ == "__main__":
     if not os.path.exists(FILE_PATH):
         raise FileNotFoundError(f"Data file {FILE_PATH} not found.")
 
-    data_dict = preprocess_data(FILE_PATH, test_size=0.2, random_state=RANDOM_STATE)
+    data_dict = preprocess_data(FILE_PATH, test_size=0.02, random_state=RANDOM_STATE)
+    preprocessor_path = "src/NNProbe/weights/preprocessor.pkl"
+    target_scaler_path = "src/NNProbe/weights/target_scaler.pkl"
 
-    save_preprocessor(data_dict["preprocessor"], data_dict["target_scaler"])
+    save_preprocessor(
+        data_dict["preprocessor"],
+        data_dict["target_scaler"],
+        preprocessor_path,
+        target_scaler_path,
+    )
 
     X_train = data_dict["X_train"]
     X_test = data_dict["X_test"]
@@ -42,8 +48,8 @@ if __name__ == "__main__":
         f"Final training loss: {history['train_loss'][-1]}, Final validation loss: {history['val_loss'][-1]}"
     )
 
-    torch.save(model.state_dict(), "src/NNProbe/weights/mlp_regressor_model.pth")
-    print("Model weights saved to src/NNProbe/weights/mlp_regressor_model.pth")
+    model.save_pretrained("src/NNProbe/weights/")
+    print("Model weights saved to src/NNProbe/weights/")
 
     test_dnn_performance(
         model,
@@ -53,4 +59,13 @@ if __name__ == "__main__":
         X_test,
         y_train_scaled,
         y_test_scaled,
+    )
+
+    upload(
+        repo_id="FreekKlabbers/plasma-probe",
+        weights_path="src/NNProbe/weights/model.pt",
+        config_path="src/NNProbe/weights/config.json",
+        extra_paths=[preprocessor_path, target_scaler_path],
+        private=False,
+        commit_message="Upload weights from training run",
     )

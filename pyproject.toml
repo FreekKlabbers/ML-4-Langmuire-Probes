@@ -13,6 +13,7 @@ dependencies = [
     "scikit-learn",
     "shap",
     "torch",
+    "huggingface-hub",
 ]
 
 [tool.setuptools.packages.find]
