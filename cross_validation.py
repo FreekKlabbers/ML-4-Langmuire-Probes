@@ -3,26 +3,19 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.compose import ColumnTransformer
 from sklearn.metrics import r2_score
 from sklearn.model_selection import KFold
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, StandardScaler
+from sklearn.preprocessing import StandardScaler
 
 from NNProbe import train_mlp_regressor
-from NNProbe.pipeline import (
-    FEATURE_COLUMNS,
-    engineer_features,
-    evaluation_mask,
-    physical_log,
-)
+from NNProbe.pipeline import engineer_features, evaluation_mask, make_preprocessor
 
 N_SPLITS = 5
 FILE_PATH = "data/bryant08-precalc-ML.npy"
-RANDOM_STATE = 0
+RANDOM_STATE = 42
 
 
-def load_data(file_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_data(file_path: str) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
     """Load all cleaned rows plus the mask for the evaluation parameter range."""
     results = np.load(file_path)
     mask = ~((results[:, 0] == 0.0) * (results[:, 1] == 0.0))
@@ -31,21 +24,7 @@ def load_data(file_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     features = engineer_features(frame)
     target = np.log(frame["J"].to_numpy()).reshape(-1, 1)
-    return features.to_numpy(), target, evaluation_mask(frame).to_numpy()
-
-
-def make_preprocessor() -> ColumnTransformer:
-    feature_pipeline = Pipeline(
-        [
-            ("log", FunctionTransformer(physical_log, validate=True)),
-            ("scaler", StandardScaler()),
-        ]
-    )
-    return ColumnTransformer(
-        transformers=[
-            ("wide_range", feature_pipeline, list(range(len(FEATURE_COLUMNS))))
-        ]
-    )
+    return features, target, evaluation_mask(frame).to_numpy()
 
 
 def evaluate_fold(model, target_scaler, X_test, y_test) -> tuple[float, float, float]:
@@ -78,8 +57,8 @@ def cross_validate(file_path: str = FILE_PATH) -> None:
             raise ValueError(f"Fold {fold} has no rows in the evaluation range.")
 
         preprocessor = make_preprocessor()
-        X_train = np.asarray(preprocessor.fit_transform(X[train_indices]))
-        X_test = np.asarray(preprocessor.transform(X[test_indices]))
+        X_train = np.asarray(preprocessor.fit_transform(X.iloc[train_indices]))
+        X_test = np.asarray(preprocessor.transform(X.iloc[test_indices]))
 
         target_scaler = StandardScaler()
         y_train = target_scaler.fit_transform(y[train_indices]).ravel()
@@ -91,7 +70,7 @@ def cross_validate(file_path: str = FILE_PATH) -> None:
             y_train,
             hidden_layer_sizes=(512, 256, 128, 64),
             alpha=2e-6,
-            batch_size=256,
+            batch_size=4096,
             learning_rate_init=0.00005,
             max_iter=1000,
             early_stopping=True,

@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
 from torch import nn
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import random_split
 
 
 class MLPRegressorTorch(nn.Module):
@@ -29,7 +29,7 @@ class MLPRegressorTorch(nn.Module):
         prev_dim = input_dim
         for h in hidden_layer_sizes:
             layers.append(nn.Linear(prev_dim, h))
-            layers.append(nn.ReLU())
+            layers.append(nn.Tanh())
             prev_dim = h
 
         layers.append(nn.Linear(prev_dim, 1))
@@ -182,20 +182,24 @@ def train_mlp_regressor(
     X_t = torch.tensor(np.asarray(X, dtype=np.float32), dtype=torch.float32)
     y_t = torch.tensor(np.asarray(y, dtype=np.float32), dtype=torch.float32)
 
-    full_dataset = TensorDataset(X_t, y_t)
-
+    # keep the data on the device and slice batches directly; a DataLoader would
+    # fetch and collate every sample in Python, which bottlenecks the GPU
     if early_stopping:
-        n_val = int(len(full_dataset) * validation_fraction)
-        n_train = len(full_dataset) - n_val
+        n_val = int(len(X_t) * validation_fraction)
+        n_train = len(X_t) - n_val
         generator = torch.Generator().manual_seed(random_state)
-        train_dataset, val_dataset = random_split(
-            full_dataset, [n_train, n_val], generator=generator
+        train_idx, val_idx = random_split(
+            range(len(X_t)), [n_train, n_val], generator=generator
         )
+        train_idx = torch.as_tensor(list(train_idx))
+        val_idx = torch.as_tensor(list(val_idx))
+        X_train, y_train = X_t[train_idx].to(device), y_t[train_idx].to(device)
+        X_val, y_val = X_t[val_idx].to(device), y_t[val_idx].to(device)
     else:
-        train_dataset = full_dataset
-        val_dataset = None
+        X_train, y_train = X_t.to(device), y_t.to(device)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    n_train = len(X_train)
+    shuffle_generator = torch.Generator(device=device).manual_seed(random_state)
 
     model = MLPRegressorTorch(
         input_dim=X.shape[1], hidden_layer_sizes=hidden_layer_sizes
@@ -203,7 +207,10 @@ def train_mlp_regressor(
     model.to(device)
 
     optimizer = torch.optim.Adam(
-        model.parameters(), lr=learning_rate_init, weight_decay=alpha
+        model.parameters(),
+        lr=learning_rate_init,
+        weight_decay=alpha,
+        fused=device.startswith("cuda"),
     )
     criterion = nn.MSELoss()
 
@@ -215,11 +222,13 @@ def train_mlp_regressor(
 
     for epoch in range(max_iter):
         model.train()
-        running_loss = 0.0
-        n_samples = 0
+        # accumulate on the device; calling loss.item() every step would force a sync
+        running_loss = torch.zeros((), device=device)
+        perm = torch.randperm(n_train, device=device, generator=shuffle_generator)
 
-        for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)
+        for i in range(0, n_train, batch_size):
+            batch = perm[i : i + batch_size]
+            xb, yb = X_train[batch], y_train[batch]
 
             optimizer.zero_grad()
             preds = model(xb)
@@ -227,23 +236,20 @@ def train_mlp_regressor(
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item() * xb.size(0)
-            n_samples += xb.size(0)
+            running_loss += loss.detach() * xb.size(0)
 
-        train_loss = running_loss / n_samples
+        train_loss = running_loss.item() / n_train
         history["train_loss"].append(train_loss)
 
         # early stopping check
         if early_stopping:
             model.eval()
             with torch.no_grad():
-                X_val, y_val = val_dataset[:]
-                X_val, y_val = X_val.to(device), y_val.to(device)
                 val_preds = model(X_val)
                 val_loss = criterion(val_preds, y_val).item()
             history["val_loss"].append(val_loss)
 
-            if val_loss < best_val_loss - 1e-4:  # small tolleranace
+            if val_loss < best_val_loss * 0.99:  # 1% relative tolerance (inf-safe)
                 best_val_loss = val_loss
                 epochs_no_improve = 0
                 best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}

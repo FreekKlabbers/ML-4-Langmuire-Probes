@@ -39,6 +39,25 @@ def engineer_features(data: pd.DataFrame) -> pd.DataFrame:
     return features[FEATURE_COLUMNS]
 
 
+def make_preprocessor() -> ColumnTransformer:
+    """Build the (unfitted) feature preprocessor: clip, log10, standard scale."""
+    feat_pipeline = Pipeline(
+        [
+            (
+                "clip",
+                FunctionTransformer(
+                    np.clip, kw_args={"a_min": 1e-15, "a_max": None}, validate=True
+                ),
+            ),
+            ("log", FunctionTransformer(np.log10, validate=True)),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    return ColumnTransformer(
+        transformers=[("wide_range", feat_pipeline, FEATURE_COLUMNS)]
+    )
+
+
 def evaluation_mask(data: pd.DataFrame) -> pd.Series:
     """Return the rows in the parameter range used for evaluation."""
     return (
@@ -115,23 +134,8 @@ def preprocess_data(
     y_train = np.asarray(np.log(train_df["J"])).reshape(-1, 1)
     y_test = np.asarray(np.log(test_df["J"])).reshape(-1, 1)
 
-    feat_pipeline = Pipeline(
-        [
-            (
-                "clip",
-                FunctionTransformer(
-                    np.clip, kw_args={"a_min": 1e-15, "a_max": None}, validate=True
-                ),
-            ),
-            ("log", FunctionTransformer(np.log10, validate=True)),
-            ("scaler", StandardScaler()),
-        ]
-    )
-
     # Feature scaling
-    preprocessor = ColumnTransformer(
-        transformers=[("wide_range", feat_pipeline, FEATURE_COLUMNS)]
-    )
+    preprocessor = make_preprocessor()
     X_train = np.asarray(preprocessor.fit_transform(X_train))
     X_test = np.asarray(preprocessor.transform(X_test))
 
