@@ -20,6 +20,7 @@ class _Tee:
     def write(self, text):
         self.stream.write(text)
         self.log_file.write(text)
+        self.log_file.flush()  # keep the log current while the run is in progress
         return len(text)
 
     def flush(self):
