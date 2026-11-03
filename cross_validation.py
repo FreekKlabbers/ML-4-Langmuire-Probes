@@ -7,12 +7,39 @@ from sklearn.metrics import r2_score
 from sklearn.model_selection import KFold
 from sklearn.preprocessing import StandardScaler
 
-from NNProbe import train_mlp_regressor
-from NNProbe.pipeline import engineer_features, evaluation_mask, make_preprocessor
+from NNProbe import MLPRegressorTorch, log_run, train_mlp_regressor
+from NNProbe.pipeline import (
+    FEATURE_COLUMNS,
+    engineer_features,
+    evaluation_mask,
+    make_preprocessor,
+)
 
 N_SPLITS = 5
 FILE_PATH = "data/bryant08-precalc-ML.npy"
 RANDOM_STATE = 42
+EPOCHS = 2500
+IN_RANGE_WEIGHT = 1.0  # loss weight of training rows inside the evaluation range
+HIDDEN_LAYER_SIZES = (512, 256, 128, 64)
+ALPHA = 0.0
+BATCH_SIZE = 512
+LEARNING_RATE_INIT = 2.5e-4
+WARMUP_FRACTION = 0.02
+
+RUN_SETTINGS = {
+    "data file": FILE_PATH,
+    "folds": N_SPLITS,
+    "random state": f"{RANDOM_STATE} (split), {RANDOM_STATE} + fold (training)",
+    "features": FEATURE_COLUMNS,
+    "epochs": EPOCHS,
+    "in-range weight": IN_RANGE_WEIGHT,
+    "hidden layer sizes": HIDDEN_LAYER_SIZES,
+    "alpha (weight decay)": ALPHA,
+    "batch size": BATCH_SIZE,
+    "learning rate init": LEARNING_RATE_INIT,
+    "warmup fraction": WARMUP_FRACTION,
+    "architecture": MLPRegressorTorch(len(FEATURE_COLUMNS), HIDDEN_LAYER_SIZES),
+}
 
 
 def load_data(file_path: str) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
@@ -68,13 +95,14 @@ def cross_validate(file_path: str = FILE_PATH) -> None:
         model, _ = train_mlp_regressor(
             X_train,
             y_train,
-            hidden_layer_sizes=(512, 256, 128, 64),
-            alpha=2e-6,
-            batch_size=4096,
-            learning_rate_init=0.00005,
-            max_iter=1000,
-            early_stopping=True,
-            n_iter_no_change=50,
+            in_range=evaluation_rows[train_indices],
+            in_range_weight=IN_RANGE_WEIGHT,
+            hidden_layer_sizes=HIDDEN_LAYER_SIZES,
+            alpha=ALPHA,
+            batch_size=BATCH_SIZE,
+            learning_rate_init=LEARNING_RATE_INIT,
+            epochs=EPOCHS,
+            warmup_fraction=WARMUP_FRACTION,
             random_state=RANDOM_STATE + fold,
         )
 
@@ -102,4 +130,5 @@ def cross_validate(file_path: str = FILE_PATH) -> None:
 if __name__ == "__main__":
     if not os.path.exists(FILE_PATH):
         raise FileNotFoundError(f"Data file {FILE_PATH} not found.")
-    cross_validate(FILE_PATH)
+    with log_run("cross_validation", RUN_SETTINGS):
+        cross_validate(FILE_PATH)

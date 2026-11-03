@@ -2,12 +2,14 @@ from .architecture import MLPRegressorTorch, train_mlp_regressor
 from .model_management import upload
 from .pipeline import load_preprocessor, preprocess_data, save_preprocessor
 from .predict import Predictor
+from .run_logging import log_run
 from .scoring import test_dnn_performance
 
 __all__ = [
     "MLPRegressorTorch",
     "Predictor",
     "load_preprocessor",
+    "log_run",
     "preprocess_data",
     "save_preprocessor",
     "test_dnn_performance",

@@ -22,6 +22,7 @@ class PreprocessedData(TypedDict):
     preprocessor: ColumnTransformer
     target_scaler: StandardScaler
     X_train: np.ndarray
+    train_in_range: np.ndarray
     X_test: np.ndarray
     y_train_scaled: np.ndarray
     y_test_scaled: np.ndarray
@@ -101,6 +102,7 @@ def preprocess_data(
         "preprocessor": preprocessor,
         "target_scaler": target_scaler,
         "X_train": X_train,
+        "train_in_range": boolean mask of the training rows in the evaluation range,
         "X_test": X_test,
         "y_train_scaled": y_train_scaled,
         "y_test_scaled": y_test_scaled,
@@ -129,6 +131,7 @@ def preprocess_data(
         f"{len(test_df)} rows in the filtered parameter range."
     )
 
+    train_in_range = evaluation_mask(train_df).to_numpy()
     X_train = engineer_features(train_df)
     X_test = engineer_features(test_df)
     y_train = np.asarray(np.log(train_df["J"])).reshape(-1, 1)
@@ -148,6 +151,7 @@ def preprocess_data(
         "preprocessor": preprocessor,
         "target_scaler": target_scaler,
         "X_train": X_train,
+        "train_in_range": train_in_range,
         "X_test": X_test,
         "y_train_scaled": y_train_scaled,
         "y_test_scaled": y_test_scaled,

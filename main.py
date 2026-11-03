@@ -1,23 +1,52 @@
 import os
 
 from NNProbe import (
+    MLPRegressorTorch,
+    log_run,
     preprocess_data,
     save_preprocessor,
     test_dnn_performance,
     train_mlp_regressor,
     upload,
 )
+from NNProbe.pipeline import FEATURE_COLUMNS
 
-if __name__ == "__main__":
-    FILE_PATH = "data/bryant08-precalc-ML.npy"
-    RANDOM_STATE = 42
+FILE_PATH = "data/bryant08-precalc-ML.npy"
+WEIGHTS_DIR = "src/NNProbe/weights/"
+RANDOM_STATE = 42
+TEST_SIZE = 0.02
+EPOCHS = 2500
+IN_RANGE_WEIGHT = 1.0  # loss weight of training rows inside the evaluation range
+HIDDEN_LAYER_SIZES = (512, 256, 128, 64)
+ALPHA = 0.0
+BATCH_SIZE = 512
+LEARNING_RATE_INIT = 2.5e-4
+WARMUP_FRACTION = 0.02
 
+RUN_SETTINGS = {
+    "data file": FILE_PATH,
+    "weights dir": WEIGHTS_DIR,
+    "random state": RANDOM_STATE,
+    "test size": TEST_SIZE,
+    "features": FEATURE_COLUMNS,
+    "epochs": EPOCHS,
+    "in-range weight": IN_RANGE_WEIGHT,
+    "hidden layer sizes": HIDDEN_LAYER_SIZES,
+    "alpha (weight decay)": ALPHA,
+    "batch size": BATCH_SIZE,
+    "learning rate init": LEARNING_RATE_INIT,
+    "warmup fraction": WARMUP_FRACTION,
+    "architecture": MLPRegressorTorch(len(FEATURE_COLUMNS), HIDDEN_LAYER_SIZES),
+}
+
+
+def main():
     if not os.path.exists(FILE_PATH):
         raise FileNotFoundError(f"Data file {FILE_PATH} not found.")
 
-    data_dict = preprocess_data(FILE_PATH, test_size=0.02, random_state=RANDOM_STATE)
-    preprocessor_path = "src/NNProbe/weights/preprocessor.pkl"
-    target_scaler_path = "src/NNProbe/weights/target_scaler.pkl"
+    data_dict = preprocess_data(FILE_PATH, test_size=TEST_SIZE, random_state=RANDOM_STATE)
+    preprocessor_path = os.path.join(WEIGHTS_DIR, "preprocessor.pkl")
+    target_scaler_path = os.path.join(WEIGHTS_DIR, "target_scaler.pkl")
 
     save_preprocessor(
         data_dict["preprocessor"],
@@ -34,22 +63,21 @@ if __name__ == "__main__":
     model, history = train_mlp_regressor(
         X_train,
         y_train_scaled,
-        hidden_layer_sizes=(512, 256, 128, 64),
-        alpha=2e-6,
-        batch_size=256,
-        learning_rate_init=0.00005,
-        max_iter=1000,
-        early_stopping=True,
-        n_iter_no_change=50,
+        in_range=data_dict["train_in_range"],
+        in_range_weight=IN_RANGE_WEIGHT,
+        hidden_layer_sizes=HIDDEN_LAYER_SIZES,
+        alpha=ALPHA,
+        batch_size=BATCH_SIZE,
+        learning_rate_init=LEARNING_RATE_INIT,
+        epochs=EPOCHS,
+        warmup_fraction=WARMUP_FRACTION,
         random_state=RANDOM_STATE,
     )
 
-    print(
-        f"Final training loss: {history['train_loss'][-1]}, Final validation loss: {history['val_loss'][-1]}"
-    )
+    print(f"Final training loss: {history['train_loss'][-1]}")
 
-    model.save_pretrained("src/NNProbe/weights/")
-    print("Model weights saved to src/NNProbe/weights/")
+    model.save_pretrained(WEIGHTS_DIR)
+    print(f"Model weights saved to {WEIGHTS_DIR}")
 
     test_dnn_performance(
         model,
@@ -61,11 +89,16 @@ if __name__ == "__main__":
         y_test_scaled,
     )
 
-    upload(
-        repo_id="FreekKlabbers/plasma-probe",
-        weights_path="src/NNProbe/weights/model.pt",
-        config_path="src/NNProbe/weights/config.json",
-        extra_paths=[preprocessor_path, target_scaler_path],
-        private=False,
-        commit_message="Upload weights from training run",
-    )
+    # upload(
+    #     repo_id="FreekKlabbers/plasma-probe",
+    #     weights_path=os.path.join(WEIGHTS_DIR, "model.pt"),
+    #     config_path=os.path.join(WEIGHTS_DIR, "config.json"),
+    #     extra_paths=[preprocessor_path, target_scaler_path],
+    #     private=False,
+    #     commit_message="Upload weights from training run",
+    # )
+
+
+if __name__ == "__main__":
+    with log_run("main", RUN_SETTINGS):
+        main()

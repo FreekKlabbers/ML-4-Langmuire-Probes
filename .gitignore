@@ -221,3 +221,5 @@ __marimo__/
 *.env
 data/
 .vscode/
+# run logs
+output/

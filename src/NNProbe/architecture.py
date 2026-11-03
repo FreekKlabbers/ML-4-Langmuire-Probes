@@ -1,12 +1,12 @@
 import inspect
 import json
+import math
 from pathlib import Path
 
 import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
 from torch import nn
-from torch.utils.data import random_split
 
 
 class MLPRegressorTorch(nn.Module):
@@ -123,82 +123,82 @@ class MLPRegressorTorch(nn.Module):
 def train_mlp_regressor(
     X: np.ndarray,
     y: np.ndarray,
+    in_range: np.ndarray | None = None,
+    in_range_weight: float = 1.0,
     hidden_layer_sizes=(128, 64, 32, 16),
-    alpha: float = 0.0005,
-    batch_size: int = 256,
-    learning_rate_init: float = 0.001,
-    max_iter: int = 2000,
-    early_stopping: bool = True,
-    n_iter_no_change: int = 20,
-    validation_fraction: float = 0.1,
+    alpha: float = 0.0,
+    batch_size: int = 512,
+    learning_rate_init: float = 2.5e-4,
+    epochs: int = 2000,
+    warmup_fraction: float = 0.02,
     random_state: int = 42,
     device: str = None,
 ):
     """
-    Trains an MLPRegressorTorch model, mirroring sklearn's MLPRegressor defaults
-    for the parameters given. Returns the trained model and loss history.
+    Trains an MLPRegressorTorch model on all of X for a fixed number of epochs with a
+    weighted L1 loss and a warmup + cosine LR schedule that ends at 0, so the final
+    weights are the converged ones. There is no validation split or early stopping.
+    Returns the trained model and loss history.
 
     Parameters
     ----------
     X : np.ndarray
         Input features for training.
     y : np.ndarray
-        Target values for training.
+        Target values for training (the standardized log J).
+    in_range : np.ndarray, optional
+        Boolean mask of the training rows inside the evaluation range, from
+        `evaluation_mask` on the raw feature frame. Ignored when None.
+    in_range_weight : float, optional
+        Loss weight of the rows in `in_range`; all other rows have weight 1.
     hidden_layer_sizes : tuple, optional
         The ith element represents the number of neurons in the ith hidden layer.
     alpha : float, optional
-        L2 penalty (regularization term) parameter.
+        L2 penalty (Adam weight decay).
     batch_size : int, optional
-        Size of minibatches for stochastic optimizers.
+        Size of minibatches. The last partial batch of each epoch is dropped.
     learning_rate_init : float, optional
-        The initial learning rate used. It controls the step-size in updating the weights.
-    max_iter : int, optional
-        Maximum number of iterations. The solver iterates until convergence or this number of iterations.
-    early_stopping : bool, optional
-        Whether to use early stopping to terminate training when validation score is not improving.
-    n_iter_no_change : int, optional
-        Number of iterations with no improvement to wait before stopping.
-    validation_fraction : float, optional
-        The proportion of training data to set aside as validation set for early stopping.
+        Peak learning rate, reached at the end of the warmup.
+    epochs : int, optional
+        Number of passes over the training data.
+    warmup_fraction : float, optional
+        Fraction of the training steps spent on linear LR warmup, before the cosine decay.
     random_state : int, optional
         Seed for random number generator for reproducibility.
     device : str, optional
         Device to run the training on. If None, will use 'cuda' if available, else 'cpu'.
+        On CUDA the whole training step runs as a captured CUDA graph.
 
     Returns
     -------
     model : MLPRegressorTorch
         The trained MLPRegressorTorch model.
     history : dict
-        Dictionary containing training and validation loss history.
+        Dictionary containing the training loss history per epoch.
     """
 
     torch.manual_seed(random_state)
     np.random.seed(random_state)
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda_graph = device.startswith("cuda")
     print(f"Using device: {device}")
-
-    X_t = torch.tensor(np.asarray(X, dtype=np.float32), dtype=torch.float32)
-    y_t = torch.tensor(np.asarray(y, dtype=np.float32), dtype=torch.float32)
 
     # keep the data on the device and slice batches directly; a DataLoader would
     # fetch and collate every sample in Python, which bottlenecks the GPU
-    if early_stopping:
-        n_val = int(len(X_t) * validation_fraction)
-        n_train = len(X_t) - n_val
-        generator = torch.Generator().manual_seed(random_state)
-        train_idx, val_idx = random_split(
-            range(len(X_t)), [n_train, n_val], generator=generator
-        )
-        train_idx = torch.as_tensor(list(train_idx))
-        val_idx = torch.as_tensor(list(val_idx))
-        X_train, y_train = X_t[train_idx].to(device), y_t[train_idx].to(device)
-        X_val, y_val = X_t[val_idx].to(device), y_t[val_idx].to(device)
+    X_train = torch.tensor(np.asarray(X, dtype=np.float32), device=device)
+    y_train = torch.tensor(np.asarray(y, dtype=np.float32), device=device)
+    if in_range is None:
+        weights = np.ones(len(X_train))
     else:
-        X_train, y_train = X_t.to(device), y_t.to(device)
+        weights = np.where(np.asarray(in_range, dtype=bool), in_range_weight, 1.0)
+    w_train = torch.tensor(weights, dtype=torch.float32, device=device)
 
     n_train = len(X_train)
+    n_batches = n_train // batch_size  # drop the last partial batch: static shapes
+    if n_batches == 0:
+        raise ValueError(f"Need at least batch_size={batch_size} rows, got {n_train}.")
+    total_steps = epochs * n_batches
     shuffle_generator = torch.Generator(device=device).manual_seed(random_state)
 
     model = MLPRegressorTorch(
@@ -206,72 +206,98 @@ def train_mlp_regressor(
     )
     model.to(device)
 
+    # a captured graph reads the LR from a device tensor; eager Adam takes a float
+    lr_t = torch.tensor(0.0, device=device)
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=learning_rate_init,
+        lr=lr_t if use_cuda_graph else 0.0,
+        betas=(0.9, 0.99),
         weight_decay=alpha,
-        fused=device.startswith("cuda"),
+        foreach=True,
+        capturable=use_cuda_graph,
     )
-    criterion = nn.MSELoss()
 
-    best_val_loss = float("inf")
-    epochs_no_improve = 0
-    best_state_dict = None
+    def set_lr(lr: float):
+        if use_cuda_graph:
+            lr_t.fill_(lr)
+        else:
+            for group in optimizer.param_groups:
+                group["lr"] = lr
 
-    history = {"train_loss": [], "val_loss": []}
+    def lr_at(step: int) -> float:
+        # linear warmup, then cosine decay to exactly 0 at the last step
+        frac = (step + 1) / total_steps
+        if frac < warmup_fraction:
+            return learning_rate_init * frac / warmup_fraction
+        progress = (frac - warmup_fraction) / (1 - warmup_fraction)
+        return learning_rate_init * 0.5 * (1 + math.cos(math.pi * progress))
 
-    for epoch in range(max_iter):
+    # weighted L1: on log J, |error| ~ relative error, the evaluation metric
+    def criterion(preds, target, weight):
+        return (weight * (preds - target).abs()).sum() / weight.sum()
+
+    if use_cuda_graph:
+        # The whole training step (gather, forward, backward, Adam) is captured in a
+        # CUDA graph, so the LR and batch indices live in static device tensors.
+        static_idx = torch.arange(batch_size, device=device)
+
+        def train_step():
+            xb, yb, wb = X_train[static_idx], y_train[static_idx], w_train[static_idx]
+            loss = criterion(model(xb), yb, wb)
+            loss.backward()
+            optimizer.step()
+            return loss.detach()
+
+        # warm up on a side stream before capture; lr_t is 0 so the weights do not move
+        side_stream = torch.cuda.Stream()
+        side_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side_stream):
+            for _ in range(3):
+                optimizer.zero_grad(set_to_none=True)
+                train_step()
+        torch.cuda.current_stream().wait_stream(side_stream)
+
+        # grads are None at capture, so each replay overwrites them instead of accumulating
+        graph = torch.cuda.CUDAGraph()
+        optimizer.zero_grad(set_to_none=True)
+        with torch.cuda.graph(graph):
+            static_loss = train_step()
+
+        def run_step(batch):
+            static_idx.copy_(batch)
+            graph.replay()
+            return static_loss
+
+    else:
+
+        def run_step(batch):
+            optimizer.zero_grad()
+            loss = criterion(model(X_train[batch]), y_train[batch], w_train[batch])
+            loss.backward()
+            optimizer.step()
+            return loss.detach()
+
+    history = {"train_loss": []}
+
+    step = 0
+    for epoch in range(epochs):
         model.train()
         # accumulate on the device; calling loss.item() every step would force a sync
         running_loss = torch.zeros((), device=device)
         perm = torch.randperm(n_train, device=device, generator=shuffle_generator)
 
-        for i in range(0, n_train, batch_size):
-            batch = perm[i : i + batch_size]
-            xb, yb = X_train[batch], y_train[batch]
+        for i in range(n_batches):
+            set_lr(lr_at(step))
+            running_loss += run_step(perm[i * batch_size : (i + 1) * batch_size])
+            step += 1
 
-            optimizer.zero_grad()
-            preds = model(xb)
-            loss = criterion(preds, yb)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.detach() * xb.size(0)
-
-        train_loss = running_loss.item() / n_train
+        train_loss = running_loss.item() / n_batches
         history["train_loss"].append(train_loss)
 
-        # early stopping check
-        if early_stopping:
-            model.eval()
-            with torch.no_grad():
-                val_preds = model(X_val)
-                val_loss = criterion(val_preds, y_val).item()
-            history["val_loss"].append(val_loss)
-
-            if val_loss < best_val_loss * 0.99:  # 1% relative tolerance (inf-safe)
-                best_val_loss = val_loss
-                epochs_no_improve = 0
-                best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
-            else:
-                epochs_no_improve += 1
-
-            if epochs_no_improve >= n_iter_no_change:
-                print(
-                    f"Early stopping at epoch {epoch + 1} "
-                    f"(no improvement in {n_iter_no_change} epochs). "
-                    f"Best val loss: {best_val_loss:.6f}"
-                )
-                break
-
         if (epoch + 1) % 50 == 0 or epoch == 0:
-            msg = f"Epoch {epoch + 1}/{max_iter} - train_loss: {train_loss:.6f}"
-            if early_stopping:
-                msg += f" - val_loss: {val_loss:.6f}"
-            print(msg)
-
-    # restore best weights found during early stopping
-    if early_stopping and best_state_dict is not None:
-        model.load_state_dict(best_state_dict)
+            print(
+                f"Epoch {epoch + 1}/{epochs} - train_loss: {train_loss:.6f} "
+                f"- lr: {lr_at(step - 1):.3e}"
+            )
 
     return model, history
